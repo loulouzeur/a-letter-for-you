@@ -615,7 +615,7 @@
   const fireworks = []; let fwTimer = 0; const fwColors = [0xFF00FF, 0x9900FF, 0x0000FF, 0xFF69B4, 0x8A2BE2].map(c=>new THREE.Color(c));
 
   function updateFireworks(dt) {
-    if (lootRaysActive && (currentState===STATE.CARD_OPENING||currentState===STATE.CARD_OPEN_IDLE)) {
+    if (lootRaysActive && (currentState>=STATE.CARD_CLOSED_IDLE)) {
       fwTimer -= dt;
       if (fwTimer<=0) {
         const x = (Math.random()>0.5?1:-1) * (4+Math.random()*6);
