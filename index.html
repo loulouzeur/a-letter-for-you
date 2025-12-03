@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>A letter for you</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@600&family=Work Sans:wght@300;500&display=swap');
+
+    html, body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      overflow: hidden;
+      /* Base Background: Cool Slate/Blue */
+      background: linear-gradient(to top, #cfd9df 0%, #e2ebf0 100%);
+      font-family: 'Work Sans', sans-serif;
+      user-select: none;
+      /* Prevent mobile pull-to-refresh */
+      overscroll-behavior: none;
+    }
+
+    #bg-purple {
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: radial-gradient(circle at 50% 100%, #1b0346 0%, #000000 100%);
+      opacity: 0; pointer-events: none; z-index: 0;
+      transition: opacity 0.5s ease;
+    }
+
+    #bg-dimmer {
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background-color: #000;
+      opacity: 0; pointer-events: none; z-index: 1;
+    }
+
+    #canvas-container {
+      width: 100vw; height: 100vh;
+      display: block;
+      position: absolute; top: 0; left: 0;
+      z-index: 10;
+      opacity: 0;
+      transition: opacity 2s ease;
+      cursor: grab;
+      /* CRITICAL: Disables browser handling of gestures so JS can handle them */
+      touch-action: none;
+    }
+    #canvas-container:active {
+      cursor: grabbing;
+    }
+
+    #intro-overlay {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      display: flex; justify-content: center; align-items: center;
+      pointer-events: none; z-index: 20;
+    }
+
+    /* Intro Styles */
+    .intro-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      max-width: 90%;
+      max-height: 90%;
+      opacity: 0; /* Hidden by default */
+      transition: opacity 2s ease-in-out;
+    }
+
+    .intro-text {
+      font-family: 'Work Sans', sans-serif;
+      font-weight: 500;
+      font-size: clamp(1.2rem, 4vw, 2.5rem);
+      color: #333;
+      margin-bottom: 20px;
+      line-height: 1.4;
+      text-shadow: 0 1px 2px rgba(255,255,255,0.8);
+    }
+
+    .intro-image {
+      max-width: 100%;
+      max-height: 50vh;
+      width: auto;
+      border-radius: 12px;
+      object-fit: contain;
+    }
+
+    #instructions {
+      position: absolute; bottom: 30px; width: 100%;
+      text-align: center; color: #aaa; font-size: 0.9rem;
+      opacity: 0; transition: opacity 1s; pointer-events: none;
+      letter-spacing: 2px; z-index: 15;
+    }
+
+    /* Download Button Styles */
+    #download-btn {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      padding: 10px 20px;
+      background: rgba(255, 255, 255, 0.25);
+      border: 1px solid rgba(255, 255, 255, 0.5);
+      color: rgba(255, 255, 255, 0.95);
+      font-family: 'Work Sans', sans-serif;
+      font-size: 0.8rem;
+      font-weight: 500;
+      border-radius: 30px;
+      cursor: pointer;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      transition: all 0.3s ease;
+      opacity: 0;
+      pointer-events: none;
+      z-index: 30;
+      letter-spacing: 1px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    }
+    #download-btn:hover {
+      background: rgba(255, 255, 255, 0.4);
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(0,0,0,0.15);
+      color: #fff;
+    }
+    #download-btn:active {
+      transform: translateY(0);
+    }
+  </style>
+</head>
+<body>
+
+<div id="bg-purple"></div>
+<div id="bg-dimmer"></div>
+
+<div id="intro-overlay">
+  <div class="intro-container" id="intro-content">
+    <!-- Content injected via JS -->
+  </div>
+</div>
+
+<button id="download-btn">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block; vertical-align:middle; margin-right:6px; margin-bottom:2px;">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+    <polyline points="7 10 12 15 17 10"></polyline>
+    <line x1="12" y1="15" x2="12" y2="3"></line>
+  </svg>
+  Save cover
+</button>
+
+<div id="instructions">Click to open</div>
+<div id="canvas-container"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+<script>
+  // --- MEME INTRO CONFIG ---
+  const INTRO_TEXT_TOP = "Postman:<br/>*fails to deliver a simple piece of paper*";
+  const INTRO_TEXT_BOTTOM = "Me:";
+  const INTRO_IMG_URL = "/fine-ill-do-it-myself.jpg";
+
+  const INNER_MESSAGE = "From Lulu";
+
+  // --- ASSET URLs ---
+  const FRONT_IMG_URL = "/cici.png";
+  const INSIDE_IMG_URL = "/letter.png";
+
+  // --- STATE MANAGEMENT ---
+  const STATE = {
+    INTRO: 0,
+    ENVELOPE_WAITING: 1,
+    OPENING_SEQUENCE: 2,
+    CARD_CLOSED_IDLE: 5,
+    CARD_OPENING: 6,
+    CARD_OPEN_IDLE: 7,
+    CARD_CLOSING: 8
+  };
+  let currentState = STATE.INTRO;
+
+  // --- SCENE SETUP ---
+  const container = document.getElementById('canvas-container');
+  const scene = new THREE.Scene();
+
+  const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+  camera.position.set(0, 0, 15);
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.LinearToneMapping;
+  renderer.toneMappingExposure = 0.85;
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  container.appendChild(renderer.domElement);
+
+
+  // --- INPUT CONTROLLER ---
+  let baseCameraZ = 15;
+
+  const Input = {
+    zoom: 1.0,
+    targetZoom: 1.0,
+    minZoom: 1.0,
+    maxZoom: 2.0,
+
+    pan: new THREE.Vector2(0,0),
+    targetPan: new THREE.Vector2(0,0),
+
+    isDragging: false,
+    dragStart: new THREE.Vector2(),
+    panStart: new THREE.Vector2(),
+
+    pinchStartDist: 0,
+    pinchStartZoom: 1,
+    dragDistance: 0
+  };
+
+  function getNDC(clientX, clientY) {
+    return {
+      x: (clientX / window.innerWidth) * 2 - 1,
+      y: -(clientY / window.innerHeight) * 2 + 1
+    };
+  }
+
+  function getBaseViewport() {
+    const vFovRad = (camera.fov * Math.PI) / 360;
+    const height = 2 * Math.tan(vFovRad) * baseCameraZ;
+    const width = height * camera.aspect;
+    return { width, height };
+  }
+
+  // 1. ZOOM (Wheel)
+  container.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    if (currentState < STATE.CARD_CLOSED_IDLE) return;
+
+    const zoomSensitivity = 0.001;
+    const zoomDelta = -e.deltaY * zoomSensitivity;
+    const oldZoom = Input.targetZoom;
+    let newZoom = oldZoom + zoomDelta;
+
+    newZoom = Math.max(Input.minZoom, Math.min(Input.maxZoom, newZoom));
+    Input.targetZoom = newZoom;
+
+    if (newZoom !== oldZoom) {
+      const ndc = getNDC(e.clientX, e.clientY);
+      const vp = getBaseViewport();
+      const widthTerm = (vp.width / oldZoom) - (vp.width / newZoom);
+      const heightTerm = (vp.height / oldZoom) - (vp.height / newZoom);
+      Input.targetPan.x += (ndc.x * widthTerm) / 2;
+      Input.targetPan.y += (ndc.y * heightTerm) / 2;
+    }
+  }, { passive: false });
+
+  // 2. DRAG (Mouse)
+  container.addEventListener('mousedown', (e) => {
+    Input.isDragging = true;
+    Input.dragStart.set(e.clientX, e.clientY);
+    Input.panStart.copy(Input.targetPan);
+    Input.dragDistance = 0;
+    container.style.cursor = 'grabbing';
+  });
+
+  container.addEventListener('mousemove', (e) => {
+    updateParallax(e.clientX, e.clientY);
+
+    if (!Input.isDragging) return;
+
+    const dx = e.clientX - Input.dragStart.x;
+    const dy = e.clientY - Input.dragStart.y;
+    Input.dragDistance += Math.abs(e.movementX) + Math.abs(e.movementY);
+
+    if (currentState < STATE.CARD_CLOSED_IDLE) return;
+
+    const vp = getBaseViewport();
+    const currentVisHeight = vp.height / Input.zoom;
+    const panFactor = currentVisHeight / window.innerHeight;
+
+    Input.targetPan.x = Input.panStart.x - (dx * panFactor);
+    Input.targetPan.y = Input.panStart.y + (dy * panFactor);
+  });
+
+  container.addEventListener('mouseup', (e) => {
+    Input.isDragging = false;
+    container.style.cursor = 'grab';
+    if (Input.dragDistance < 5) handleInteraction(e.clientX, e.clientY);
+  });
+
+  // 3. TOUCH (Mobile)
+  container.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    Input.isDragging = true;
+    Input.dragDistance = 0;
+
+    if (e.touches.length === 1) {
+      Input.dragStart.set(e.touches[0].clientX, e.touches[0].clientY);
+      Input.panStart.copy(Input.targetPan);
+    } else if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      Input.pinchStartDist = Math.sqrt(dx*dx + dy*dy);
+      Input.pinchStartZoom = Input.targetZoom;
+      const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+      const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+      Input.dragStart.set(midX, midY);
+      Input.panStart.copy(Input.targetPan);
+    }
+  }, { passive: false });
+
+  container.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+
+    if (e.touches.length === 1) {
+      const dx = e.touches[0].clientX - Input.dragStart.x;
+      const dy = e.touches[0].clientY - Input.dragStart.y;
+      Input.dragDistance += Math.abs(dx) + Math.abs(dy);
+    } else {
+      // Fix: If using 2+ fingers (zooming), automatically invalidate the 'click'
+      Input.dragDistance = 100;
+    }
+
+    if (currentState < STATE.CARD_CLOSED_IDLE) return;
+
+    const vp = getBaseViewport();
+    const currentVisHeight = vp.height / Input.zoom;
+    const panFactor = currentVisHeight / window.innerHeight;
+
+    if (e.touches.length === 1) {
+      const dx = e.touches[0].clientX - Input.dragStart.x;
+      const dy = e.touches[0].clientY - Input.dragStart.y;
+      Input.targetPan.x = Input.panStart.x - (dx * panFactor);
+      Input.targetPan.y = Input.panStart.y + (dy * panFactor);
+      updateParallax(e.touches[0].clientX, e.touches[0].clientY, 2.0);
+
+    } else if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      const scale = dist / Input.pinchStartDist;
+      let newZoom = Input.pinchStartZoom * scale;
+      newZoom = Math.max(Input.minZoom, Math.min(Input.maxZoom, newZoom));
+
+      const oldZoom = Input.targetZoom;
+      Input.targetZoom = newZoom;
+
+      if (newZoom !== oldZoom) {
+        const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+        const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        const ndc = getNDC(midX, midY);
+        const widthTerm = (vp.width / oldZoom) - (vp.width / newZoom);
+        const heightTerm = (vp.height / oldZoom) - (vp.height / newZoom);
+        // Zoom towards fingers
+        Input.targetPan.x += (ndc.x * widthTerm) / 2;
+        Input.targetPan.y += (ndc.y * heightTerm) / 2;
+      }
+    }
+  }, { passive: false });
+
+  container.addEventListener('touchend', (e) => {
+    Input.isDragging = false;
+
+    if (e.touches.length > 0) {
+      Input.isDragging = true;
+      Input.dragStart.set(e.touches[0].clientX, e.touches[0].clientY);
+      Input.panStart.copy(Input.targetPan);
+    }
+
+    if (e.touches.length === 0 && Input.dragDistance < 10) {
+      if (e.changedTouches.length > 0) {
+        handleInteraction(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
+      }
+    }
+  });
+
+
+  // --- DOWNLOAD HANDLER ---
+  const downloadBtn = document.getElementById('download-btn');
+  downloadBtn.addEventListener('click', (e) => {
+    e.stopPropagation(); // Don't trigger 3D click
+    const link = document.createElement('a');
+    link.href = FRONT_IMG_URL;
+    link.download = 'cici-30th.png';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  });
+
+
+  // --- LIGHTING ---
+  const hemiLight = new THREE.HemisphereLight(0xffffff, 0xe0e0e0, 0.6);
+  scene.add(hemiLight);
+
+  const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
+  dirLight.position.set(5, 10, 7);
+  dirLight.castShadow = true;
+  dirLight.shadow.mapSize.width = 2048;
+  dirLight.shadow.mapSize.height = 2048;
+  dirLight.shadow.bias = -0.0001;
+  scene.add(dirLight);
+
+  const pointLight = new THREE.PointLight(0xffd700, 0.4);
+  pointLight.position.set(-5, 5, 20);
+  scene.add(pointLight);
+
+  // --- TEXTURES ---
+  function createSparkleTexture() {
+    const canvas = document.createElement('canvas'); canvas.width = 64; canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    const center = 32; const outerRadius = 28; const innerRadius = 6; const spikes = 4;
+    ctx.beginPath();
+    for (let i = 0; i < spikes * 2; i++) {
+      const radius = (i % 2 === 0) ? outerRadius : innerRadius;
+      const angle = (i / (spikes * 2)) * Math.PI * 2;
+      const x = center + Math.cos(angle) * radius;
+      const y = center + Math.sin(angle) * radius;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    const grad = ctx.createRadialGradient(center, center, innerRadius * 0.5, center, center, outerRadius);
+    grad.addColorStop(0, 'rgba(255, 255, 255, 1)'); grad.addColorStop(0.4, 'rgba(255, 255, 255, 0.8)'); grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = grad; ctx.fill();
+    return new THREE.CanvasTexture(canvas);
+  }
+
+  function createCircleTexture() {
+    const canvas = document.createElement('canvas'); canvas.width = 32; canvas.height = 32;
+    const ctx = canvas.getContext('2d');
+    const grad = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+    grad.addColorStop(0, 'rgba(255, 255, 255, 1)'); grad.addColorStop(0.4, 'rgba(255, 255, 255, 0.8)'); grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = grad; ctx.fillRect(0, 0, 32, 32);
+    return new THREE.CanvasTexture(canvas);
+  }
+
+  function createRayTexture() {
+    const canvas = document.createElement('canvas'); canvas.width = 64; canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    const grad = ctx.createLinearGradient(0, 0, 0, 256);
+    grad.addColorStop(0, 'rgba(255, 170, 51, 0)'); grad.addColorStop(0.5, 'rgba(255, 220, 100, 0.6)'); grad.addColorStop(1, 'rgba(255, 170, 51, 0.9)');
+    ctx.fillStyle = grad; ctx.fillRect(0, 0, 64, 256);
+    const maskGrad = ctx.createLinearGradient(0, 0, 64, 0);
+    maskGrad.addColorStop(0, 'rgba(0,0,0,1)'); maskGrad.addColorStop(0.5, 'rgba(0,0,0,0)'); maskGrad.addColorStop(1, 'rgba(0,0,0,1)');
+    ctx.globalCompositeOperation = 'destination-out'; ctx.fillStyle = maskGrad; ctx.fillRect(0, 0, 64, 256);
+    return new THREE.CanvasTexture(canvas);
+  }
+
+  function createPaperBumpMap() {
+    const bumpMapScale = 1;
+    const bumpMapSize = 512 * bumpMapScale;
+    const canvas = document.createElement('canvas'); canvas.width = bumpMapSize; canvas.height = bumpMapSize;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#808080'; ctx.fillRect(0,0,bumpMapSize,bumpMapSize);
+    for(let i=0; i<200000*bumpMapScale*bumpMapScale; i++) {
+      const val = 128 + Math.floor((Math.random() - 0.5) * 60);
+      ctx.fillStyle = `rgb(${val},${val},${val})`; ctx.fillRect(Math.random()*bumpMapSize, Math.random()*bumpMapSize, 2*bumpMapScale, 2*bumpMapScale);
+    }
+    const t = new THREE.CanvasTexture(canvas); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(4, 4); return t;
+  }
+
+  function createTextTexture(text, type = 'front') {
+    const canvas = document.createElement('canvas'); canvas.width = 1024; canvas.height = 1024;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = type === 'front' ? '#ff9a9e' : '#fdfbf7'; ctx.fillRect(0, 0, 1024, 1024);
+    if (type === 'front') {
+      ctx.fillStyle = '#fad0c4'; ctx.beginPath(); ctx.arc(512, 512, 400, 0, Math.PI * 2); ctx.fill();
+      ctx.font = 'bold 120px Work Sans'; ctx.fillStyle = 'white'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText("Happy", 512, 400); ctx.fillText("Birthday!", 512, 550);
+    } else if (type === 'inside') {
+      ctx.font = '50px Dancing Script'; ctx.fillStyle = '#333'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      const lines = text.split('\n'); let y = 300;
+      lines.forEach(line => { ctx.fillText(line, 512, y); y += 80; });
+    } else {
+      ctx.fillStyle = '#fdfbf7'; ctx.fillRect(0,0,1024,1024);
+    }
+    return new THREE.CanvasTexture(canvas);
+  }
+
+  function createEnvelopeTexture() {
+    const canvas = document.createElement('canvas'); canvas.width = 512; canvas.height = 512;
+    const ctx = canvas.getContext('2d'); ctx.fillStyle = '#ece5d5'; ctx.fillRect(0,0,512,512);
+    const t = new THREE.CanvasTexture(canvas); t.encoding = THREE.sRGBEncoding; return t;
+  }
+
+  const loader = new THREE.TextureLoader(); loader.setCrossOrigin('anonymous');
+  function loadTexture(url, fallbackType) {
+    if (!url) return createTextTexture(fallbackType === 'front' ? "" : INNER_MESSAGE, fallbackType);
+    const tex = loader.load(url, ()=>{}, undefined, ()=>{
+      const fb = createTextTexture(fallbackType === 'front' ? "" : INNER_MESSAGE, fallbackType);
+      tex.image = fb.image; tex.needsUpdate = true;
+    });
+    return tex;
+  }
+
+  const frontTexture = loadTexture(FRONT_IMG_URL, 'front');
+  const insideTexture = loadTexture(INSIDE_IMG_URL, 'inside');
+  const paperTexture = createTextTexture("", 'paper');
+  const paperBumpTexture = createPaperBumpMap();
+  const sparkleTexture = createSparkleTexture();
+  const circleTexture = createCircleTexture();
+  const rayTexture = createRayTexture();
+  const envTexture = createEnvelopeTexture();
+
+  frontTexture.encoding = insideTexture.encoding = paperTexture.encoding = THREE.sRGBEncoding;
+  frontTexture.center.set(0.5, 0.5); insideTexture.center.set(0.5, 0.5);
+
+  // --- MESH GENERATION ---
+  const groupAll = new THREE.Group(); scene.add(groupAll);
+  const envelopeGroup = new THREE.Group(); groupAll.add(envelopeGroup);
+
+  const envMat = new THREE.MeshStandardMaterial({ map: envTexture, bumpMap: paperBumpTexture, bumpScale: 0.01, roughness: 0.8, side: THREE.DoubleSide });
+  const edgeMat = new THREE.MeshStandardMaterial({ color: 0xe0dac0, roughness: 1.0 });
+
+  const envBack = new THREE.Mesh(new THREE.PlaneGeometry(6.6, 6.6), envMat);
+  envBack.position.z = -0.06; envBack.castShadow = true; envelopeGroup.add(envBack);
+
+  const pocketShape = new THREE.Shape();
+  pocketShape.moveTo(-3.3, 3.3); pocketShape.lineTo(0, 0.6); pocketShape.lineTo(3.3, 3.3); pocketShape.lineTo(3.3, -3.3); pocketShape.lineTo(-3.3, -3.3); pocketShape.lineTo(-3.3, 3.3);
+  const pocketGeo = new THREE.ExtrudeGeometry(pocketShape, { depth: 0.01, bevelEnabled: true, bevelThickness: 0.02, bevelSize: 0.02, bevelSegments: 3 });
+
+  // Fix UVs for Envelope
+  const uvAttribute = pocketGeo.attributes.uv; const posAttribute = pocketGeo.attributes.position;
+  for (let i = 0; i < posAttribute.count; i++) {
+    const u = (posAttribute.getX(i) / 6.6) + 0.5; const v = (posAttribute.getY(i) / 6.6) + 0.5;
+    uvAttribute.setXY(i, u, v);
+  } uvAttribute.needsUpdate = true;
+
+  const envFront = new THREE.Mesh(pocketGeo, [envMat, edgeMat]);
+  envFront.position.z = 0.06; envFront.castShadow = true; envFront.receiveShadow = true; envelopeGroup.add(envFront);
+
+  const flapGroup = new THREE.Group(); flapGroup.position.y = 3.3; flapGroup.position.z = 0.07; envelopeGroup.add(flapGroup);
+  const flapShape = new THREE.Shape(); flapShape.moveTo(-3.3, 0); flapShape.lineTo(3.3, 0); flapShape.lineTo(0.4, -3.1); flapShape.quadraticCurveTo(0, -3.5, -0.4, -3.1); flapShape.lineTo(-3.3, 0);
+  const flapGeo = new THREE.ExtrudeGeometry(flapShape, { depth: 0.01, bevelEnabled: true, bevelThickness: 0.02, bevelSize: 0.02, bevelSegments: 3 });
+
+  const fuv = flapGeo.attributes.uv; const fpos = flapGeo.attributes.position;
+  for (let i = 0; i < fpos.count; i++) {
+    const u = (fpos.getX(i) / 6.6) + 0.5; const v = 1.0 + (fpos.getY(i) / 6.6);
+    fuv.setXY(i, u, v);
+  } fuv.needsUpdate = true;
+
+  const flap = new THREE.Mesh(flapGeo, [envMat, edgeMat]); flap.castShadow = true; flapGroup.add(flap);
+
+  // CARD
+  const cardPivotGroup = new THREE.Group(); groupAll.add(cardPivotGroup);
+
+  // HIDE CARD INITIALLY to avoid clipping during wobble
+  // cardPivotGroup.visible = true;
+  // SET THE SCALE TO 0 to avoid lag spike
+  cardPivotGroup.scale.set(0,0,0);
+
+  const cardMasterGroup = new THREE.Group(); cardPivotGroup.add(cardMasterGroup); cardMasterGroup.rotation.y = Math.PI;
+
+  const whiteMat = new THREE.MeshStandardMaterial({ color: 0xfaf9f6, bumpMap: paperBumpTexture, bumpScale: 0.02, roughness: 0.95 });
+  const frontFaceMat = new THREE.MeshStandardMaterial({ map: frontTexture, bumpMap: paperBumpTexture, bumpScale: 0.02, roughness: 0.95, color: 0xffffff });
+  const insideFaceMat = new THREE.MeshStandardMaterial({ map: insideTexture, bumpMap: paperBumpTexture, bumpScale: 0.02, roughness: 0.95, color: 0xffffff });
+  const paperFaceMat = new THREE.MeshStandardMaterial({ map: paperTexture, bumpMap: paperBumpTexture, bumpScale: 0.02, roughness: 0.95, color: 0xffffff });
+
+  const rightPanel = new THREE.Mesh(new THREE.BoxGeometry(5.8, 5.8, 0.03), [whiteMat, whiteMat, whiteMat, whiteMat, insideFaceMat, paperFaceMat]);
+  rightPanel.castShadow = true; rightPanel.receiveShadow = true; cardMasterGroup.add(rightPanel);
+
+  const hingeGroup = new THREE.Group(); hingeGroup.position.x = -2.9; cardMasterGroup.add(hingeGroup);
+  const leftGeo = new THREE.BoxGeometry(5.8, 5.8, 0.03); leftGeo.translate(-2.9, 0, 0);
+  const leftPanel = new THREE.Mesh(leftGeo, [whiteMat, whiteMat, whiteMat, whiteMat, paperFaceMat, frontFaceMat]);
+  leftPanel.castShadow = true; leftPanel.receiveShadow = true; hingeGroup.add(leftPanel);
+  hingeGroup.rotation.y = Math.PI - 0.05;
+
+  // PARTICLES
+  const burstParticles = [];
+  let spawnBurstParticles = false;
+  function spawnBurstParticle() {
+    const mat = new THREE.SpriteMaterial({ map: sparkleTexture, transparent: true, blending: THREE.AdditiveBlending, rotation: Math.random()*Math.PI });
+    const sprite = new THREE.Sprite(mat);
+    sprite.scale.setScalar(0.15 + Math.random()*0.25);
+    sprite.position.set((Math.random()-0.5)*0.5, (Math.random()-0.5)*0.5, 0.1);
+    const speed = 0.05 + Math.random()*0.35;
+    const phi = Math.random()*Math.PI*2, theta = Math.random()*Math.PI;
+    const vel = new THREE.Vector3().setFromSphericalCoords(speed, theta, phi);
+    cardPivotGroup.add(sprite);
+    burstParticles.push({ mesh: sprite, vel: vel, life: 0, maxLife: 1.5 + Math.random() });
+  }
+
+  // AURA & RAYS
+  const rayGroup = new THREE.Group(); rayGroup.position.z = -0.2; cardPivotGroup.add(rayGroup);
+  const auraSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: circleTexture, color: 0xea15d1, transparent: true, opacity: 0, blending: THREE.AdditiveBlending }));
+  auraSprite.scale.set(10,10,1); auraSprite.position.set(0,0,-2); cardPivotGroup.add(auraSprite);
+
+  const rayParticles = []; let raySpawnTimer = 0; let lootRaysActive = false;
+  const rayGeo = new THREE.PlaneGeometry(1, 1); rayGeo.translate(0, 0.5, 0);
+  function spawnRay() {
+    const mat = new THREE.MeshBasicMaterial({ map: rayTexture, color: 0xff32be, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false });
+    const mesh = new THREE.Mesh(rayGeo, mat); mesh.rotation.z = Math.random()*Math.PI*2;
+    rayGroup.add(mesh);
+    rayParticles.push({ mesh: mesh, life: 0, maxLife: 2.0, w: 0.5+Math.random()*0.5, l: 8+Math.random()*4 });
+  }
+
+  // BACKGROUND SPARKLES
+  const bgSparkleGroup = new THREE.Group(); groupAll.add(bgSparkleGroup);
+  const bgSparkles = []; let bgSpawnTimer = 0;
+  function spawnBgSparkle() {
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: sparkleTexture, transparent: true, opacity: 0, blending: THREE.AdditiveBlending }));
+    s.scale.setScalar(0.1 + Math.random()*0.2);
+    const r = 3 + Math.random()*7, theta = Math.random()*Math.PI*2, phi = Math.acos((Math.random()*2)-1);
+    s.position.setFromSphericalCoords(r, phi, theta);
+    bgSparkleGroup.add(s);
+    bgSparkles.push({ mesh: s, life: 0, maxLife: 2+Math.random()*2, targetOp: 0.4+Math.random()*0.6 });
+  }
+
+  // FIREWORKS
+  const fireworkGroup = new THREE.Group(); fireworkGroup.position.z = -20; groupAll.add(fireworkGroup);
+  const fireworks = []; let fwTimer = 0; const fwColors = [0xFF00FF, 0x9900FF, 0x0000FF, 0xFF69B4, 0x8A2BE2].map(c=>new THREE.Color(c));
+
+  function updateFireworks(dt) {
+    if (lootRaysActive && (currentState===STATE.CARD_OPENING||currentState===STATE.CARD_OPEN_IDLE)) {
+      fwTimer -= dt;
+      if (fwTimer<=0) {
+        const x = (Math.random()>0.5?1:-1) * (4+Math.random()*6);
+        const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: circleTexture, color: 0xffffff, transparent: true, blending: THREE.AdditiveBlending }));
+        s.scale.setScalar(0.3); s.position.set(x, -8, 0); fireworkGroup.add(s);
+        fireworks.push({ type:'rocket', mesh:s, pos:s.position.clone(), vel:new THREE.Vector3(0, 6+Math.random()*2, 0), targetY: 1+Math.random()*4, color: fwColors[Math.floor(Math.random()*fwColors.length)] });
+        fwTimer = 0.5 + Math.random();
+      }
+    }
+    for (let i=fireworks.length-1; i>=0; i--) {
+      const fw = fireworks[i];
+      if (fw.type==='rocket') {
+        fw.pos.addScaledVector(fw.vel, dt); fw.mesh.position.copy(fw.pos); fw.vel.y -= 2*dt;
+        if (fw.vel.y<=0 || fw.pos.y>=fw.targetY) {
+          fireworkGroup.remove(fw.mesh); fw.mesh.material.dispose(); fireworks.splice(i,1);
+          // Explode
+          for(let j=0; j<80; j++) {
+            const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: circleTexture, color: 0xffffff, transparent: true, blending: THREE.AdditiveBlending }));
+            sp.scale.setScalar(0.2+Math.random()*0.3); sp.position.copy(fw.pos); fireworkGroup.add(sp);
+            const speed = 8+Math.random()*6, theta = Math.random()*Math.PI*2, phi = Math.acos(2*Math.random()-1);
+            fireworks.push({ type:'spark', mesh:sp, pos:fw.pos.clone(), vel:new THREE.Vector3().setFromSphericalCoords(speed, phi, theta), color: fw.color, life: 1.5, maxLife: 1.5+Math.random()*0.5, trailTimer:0, size: sp.scale.x });
+          }
+        }
+      } else if (fw.type==='spark') {
+        fw.pos.addScaledVector(fw.vel, dt); fw.mesh.position.copy(fw.pos); fw.vel.y -= 2.5*dt; fw.vel.multiplyScalar(0.99);
+        fw.mesh.material.color.lerp(fw.color, dt*3);
+        fw.trailTimer-=dt;
+        if (fw.trailTimer<=0) {
+          const tr = new THREE.Sprite(new THREE.SpriteMaterial({ map: circleTexture, color: fw.mesh.material.color, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending }));
+          tr.scale.setScalar(fw.size*0.7); tr.position.copy(fw.pos); fireworkGroup.add(tr);
+          fireworks.push({ type:'trail', mesh:tr, life:0.5, maxLife:0.5 });
+          fw.trailTimer=0.03;
+        }
+        fw.life-=dt; fw.mesh.material.opacity = fw.life/fw.maxLife;
+        if (fw.life<=0) { fireworkGroup.remove(fw.mesh); fw.mesh.material.dispose(); fireworks.splice(i,1); }
+      } else {
+        fw.life-=dt; fw.mesh.material.opacity = (fw.life/fw.maxLife)*0.5;
+        if (fw.life<=0) { fireworkGroup.remove(fw.mesh); fw.mesh.material.dispose(); fireworks.splice(i,1); }
+      }
+    }
+  }
+
+
+  // --- MAIN LOGIC ---
+  const raycaster = new THREE.Raycaster();
+  const mouse = new THREE.Vector2();
+  let targetRotX = 0, targetRotY = 0;
+
+  function handleInteraction(clientX, clientY) {
+    mouse.x = (clientX / window.innerWidth) * 2 - 1; mouse.y = -(clientY / window.innerHeight) * 2 + 1;
+    raycaster.setFromCamera(mouse, camera);
+    const intersects = raycaster.intersectObjects([envelopeGroup, cardMasterGroup], true);
+    if (intersects.length > 0) {
+      if (currentState === STATE.ENVELOPE_WAITING) { currentState = STATE.OPENING_SEQUENCE; playEnvelopeSequence(); }
+      else if (currentState === STATE.CARD_CLOSED_IDLE) { currentState = STATE.CARD_OPENING; document.getElementById('instructions').style.opacity = 0; }
+      else if (currentState === STATE.CARD_OPEN_IDLE) { currentState = STATE.CARD_CLOSING; }
+    }
+  }
+
+  function updateParallax(clientX, clientY, sensitivity = 1.0) {
+    if (Input.isDragging) return;
+    const x = (clientX / window.innerWidth) * 2 - 1; const y = -(clientY / window.innerHeight) * 2 + 1;
+    if (currentState >= STATE.ENVELOPE_WAITING) { targetRotY = x * 0.2 * sensitivity; targetRotX = -y * 0.2 * sensitivity; }
+  }
+
+  function adjustCameraDistance() {
+    const aspect = window.innerWidth / window.innerHeight;
+    const vFovRad = (camera.fov * Math.PI) / 360;
+    if (aspect >= 1) baseCameraZ = (9.5 / 2) / Math.tan(vFovRad);
+    else baseCameraZ = 8.2 / (2 * aspect * Math.tan(vFovRad));
+  }
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    adjustCameraDistance();
+  });
+  adjustCameraDistance();
+
+
+  // SEQUENCING
+  const introContent = document.getElementById('intro-content');
+  // Inject Meme Content
+  introContent.innerHTML = `
+      <div class="intro-text">
+        ${INTRO_TEXT_TOP}<br>
+        ${INTRO_TEXT_BOTTOM}
+      </div>
+      <img src="${INTRO_IMG_URL}" class="intro-image" alt="Fine, I'll do it myself">
+  `;
+
+  setTimeout(() => introContent.style.opacity = 1, 500);
+  setTimeout(() => introContent.style.opacity = 0, 5000);
+  setTimeout(() => {
+    document.getElementById('intro-overlay').style.display = 'none';
+    document.getElementById('canvas-container').style.opacity = 1;
+    currentState = STATE.ENVELOPE_WAITING;
+    document.getElementById('instructions').innerText = "Click to open";
+    document.getElementById('instructions').style.opacity = 1;
+  }, 7000);
+
+  function playEnvelopeSequence() {
+    // Show card now that we are opening
+    // cardPivotGroup.visible = true;
+    // Set card scale to 1 to avoid lag spike
+    cardPivotGroup.scale.set(1,1,1);
+
+    document.getElementById('instructions').style.opacity = 0;
+    const startT = Date.now(), startRot = flapGroup.rotation.x, startZ = flapGroup.position.z;
+    const interval = setInterval(() => {
+      const p = Math.min((Date.now() - startT) / 300, 1);
+      const ease = 1 - Math.pow(1 - p, 4);
+      flapGroup.rotation.x = startRot + (Math.PI * ease);
+      flapGroup.position.z = startZ + ((-0.06 - startZ) * ease);
+      if (p === 1) { clearInterval(interval); setTimeout(pullCardOut, 300); }
+    }, 16);
+  }
+
+  function pullCardOut() {
+    const startT = Date.now(), startY = cardPivotGroup.position.y;
+    const interval = setInterval(() => {
+      const p = Math.min((Date.now() - startT) / 800, 1);
+      cardPivotGroup.position.y = startY + ((0 - startY) * (1 - Math.pow(1 - p, 2)));
+      if (p === 1) { clearInterval(interval); dropEnvelope(); }
+    }, 16);
+  }
+
+  function dropEnvelope() {
+    const startT = Date.now(), startY = envelopeGroup.position.y;
+    const interval = setInterval(() => {
+      const p = Math.min((Date.now() - startT) / 400, 1);
+      envelopeGroup.position.y = startY + ((-25 - startY) * (p*p));
+      if (p === 1) { clearInterval(interval); envelopeGroup.visible = false; slowZoomAndSpin(); }
+    }, 16);
+  }
+
+  function slowZoomAndSpin() {
+    const startT = Date.now(), startZ = cardPivotGroup.position.z, startRot = Math.PI;
+    const interval = setInterval(() => {
+      const p = Math.min((Date.now() - startT) / 1500, 1);
+      cardPivotGroup.position.z = startZ + ((3.0 - startZ) * (1 - Math.pow(1 - p, 2)));
+      if (p > 0.2) {
+        if (!spawnBurstParticles) {
+          for(let i=0; i<100; i++) spawnBurstParticle();
+          spawnBurstParticles = true;
+        }
+        if (!lootRaysActive) lootRaysActive = true;
+        const spinP = (p - 0.2) / 0.8;
+        const s = 1.70158; const p2 = spinP - 1; const spinEase = (p2 * p2 * ((s + 1) * p2 + s) + 1);
+        cardMasterGroup.rotation.y = startRot + (Math.PI * spinEase);
+      }
+      if (p === 1) {
+        clearInterval(interval); cardMasterGroup.rotation.y = 0; currentState = STATE.CARD_CLOSED_IDLE;
+        document.getElementById('instructions').innerText = "Click to read";
+        document.getElementById('instructions').style.opacity = 1;
+      }
+    }, 16);
+  }
+
+  // --- ANIMATION LOOP ---
+  let openProgress = 0, currentFloatAmp = 0.05, currentPurpleOpacity = 0, currentDimOpacity = 0;
+  let wobbleTimer = 0; // Timer for the waiting wobble
+  const clock = new THREE.Clock();
+  const bgDimmer = document.getElementById('bg-dimmer'), bgPurple = document.getElementById('bg-purple');
+
+  function animate() {
+    requestAnimationFrame(animate);
+    const dt = clock.getDelta(), damp = 0.05 * (dt / 0.01667);
+
+    // --- INPUTS & CAMERA ---
+    Input.zoom += (Input.targetZoom - Input.zoom) * 0.1;
+    Input.pan.lerp(Input.targetPan, 0.1);
+
+    const vFovRad = (camera.fov * Math.PI) / 360;
+    const visH = 2 * Math.tan(vFovRad) * baseCameraZ;
+    const visW = visH * camera.aspect;
+    // FIX: Use Input.targetZoom for clamping to avoid fighting the zoom animation
+    const maxPanX = Math.max(0, (visW - (visW / Input.targetZoom)) / 2);
+    const maxPanY = Math.max(0, (visH - (visH / Input.targetZoom)) / 2);
+
+    if (!Input.isDragging) {
+      if (Input.targetPan.x > maxPanX) Input.targetPan.x += (maxPanX - Input.targetPan.x) * 0.1;
+      if (Input.targetPan.x < -maxPanX) Input.targetPan.x += (-maxPanX - Input.targetPan.x) * 0.1;
+      if (Input.targetPan.y > maxPanY) Input.targetPan.y += (maxPanY - Input.targetPan.y) * 0.1;
+      if (Input.targetPan.y < -maxPanY) Input.targetPan.y += (-maxPanY - Input.targetPan.y) * 0.1;
+    }
+
+    if (Math.abs(Input.zoom - 1.0) < 0.05 && !Input.isDragging) {
+      Input.targetPan.lerp(new THREE.Vector2(0,0), 0.1);
+    }
+    camera.position.z = baseCameraZ / Input.zoom;
+    camera.position.x = Input.pan.x;
+    camera.position.y = Input.pan.y;
+
+
+    // --- STATE ANIMATIONS ---
+
+    // Toggle Download Button Visibility
+    if (currentState === STATE.CARD_CLOSED_IDLE) {
+      downloadBtn.style.opacity = 1;
+      downloadBtn.style.pointerEvents = 'auto';
+    } else {
+      downloadBtn.style.opacity = 0;
+      downloadBtn.style.pointerEvents = 'none';
+    }
+
+    // 1. WOBBLE (While Waiting)
+    if (currentState === STATE.ENVELOPE_WAITING) {
+      wobbleTimer += dt;
+      const period = 2.0; // Seconds between wobbles
+      const shakeDuration = 0.5; // Duration of shake
+      const t = wobbleTimer % period;
+
+      if (t < shakeDuration) {
+        // Z-axis shake (rotation towards camera)
+        // Frequency 30, Amplitude 0.05 radians
+        envelopeGroup.rotation.z = Math.sin(t * 30) * 0.05;
+      } else {
+        envelopeGroup.rotation.z = 0;
+      }
+    } else {
+      // Reset rotation immediately if not waiting (e.g. on Click)
+      envelopeGroup.rotation.z = 0;
+    }
+
+
+    // 2. VISUALS
+    currentPurpleOpacity += ((lootRaysActive?1:0) - currentPurpleOpacity) * damp * 0.5;
+    if (bgPurple) bgPurple.style.opacity = currentPurpleOpacity;
+
+    let targetDim = 0;
+    if (currentState === STATE.OPENING_SEQUENCE) {
+      targetDim = 0.75 * (1.0 - Math.max(0, (cardMasterGroup.rotation.y - Math.PI) / Math.PI));
+    } else if (currentState === STATE.CARD_OPENING || currentState === STATE.CARD_OPEN_IDLE) {
+      targetDim = 0.5;
+    }
+    currentDimOpacity += (targetDim - currentDimOpacity) * damp;
+    if (bgDimmer) bgDimmer.style.opacity = currentDimOpacity;
+
+    if (currentState < STATE.CARD_CLOSED_IDLE) {
+      groupAll.rotation.y += (targetRotY - groupAll.rotation.y) * damp;
+      groupAll.rotation.x += (targetRotX - groupAll.rotation.x) * damp;
+    } else {
+      groupAll.rotation.y += (0 - groupAll.rotation.y) * damp;
+      groupAll.rotation.x += (0 - groupAll.rotation.x) * damp;
+      if (!Input.isDragging) {
+        cardPivotGroup.rotation.y += (targetRotY - cardPivotGroup.rotation.y) * damp;
+        cardPivotGroup.rotation.x += (targetRotX - cardPivotGroup.rotation.x) * damp;
+      }
+    }
+
+    if (currentState === STATE.CARD_OPENING || currentState === STATE.CARD_OPEN_IDLE) {
+      openProgress += (1 - openProgress) * damp; if(openProgress > 0.99) currentState = STATE.CARD_OPEN_IDLE;
+    } else if (currentState === STATE.CARD_CLOSING || currentState === STATE.CARD_CLOSED_IDLE) {
+      openProgress += (0 - openProgress) * damp; if(openProgress < 0.01) currentState = STATE.CARD_CLOSED_IDLE;
+    }
+
+    hingeGroup.rotation.y = (Math.PI-0.05) - (openProgress * (Math.PI-0.05));
+    if (currentState >= STATE.CARD_CLOSED_IDLE) {
+      cardMasterGroup.position.x += (0 - cardMasterGroup.position.x) * damp;
+      cardPivotGroup.position.z += ((3.0 + (openProgress * 1.5)) - cardPivotGroup.position.z) * damp;
+      currentFloatAmp += ((currentState === STATE.CARD_OPEN_IDLE ? 0.001 : 0.05) - currentFloatAmp) * damp;
+      cardMasterGroup.position.y = Math.sin(Date.now() * 0.002) * currentFloatAmp;
+    }
+
+    for (let i = burstParticles.length - 1; i >= 0; i--) {
+      const p = burstParticles[i]; p.life += dt;
+      if (p.life >= p.maxLife) { cardPivotGroup.remove(p.mesh); p.mesh.material.dispose(); burstParticles.splice(i, 1); continue; }
+      p.mesh.position.addScaledVector(p.vel, damp/0.05); p.vel.multiplyScalar(0.98);
+      if (p.life/p.maxLife > 0.5) p.mesh.material.opacity = 1.0 - ((p.life/p.maxLife - 0.5) * 2);
+    }
+
+    updateFireworks(dt);
+
+    if (lootRaysActive) {
+      const pulse = Math.sin(Date.now() * 0.002) * 1.5 + 10.5; auraSprite.scale.set(pulse, pulse, 1);
+      auraSprite.material.opacity += (((currentState === STATE.CARD_OPEN_IDLE || currentState === STATE.CARD_OPENING)?0:0.4) - auraSprite.material.opacity) * damp;
+
+      if (!(currentState===STATE.CARD_OPENING||currentState===STATE.CARD_OPEN_IDLE)) {
+        raySpawnTimer += dt; while(raySpawnTimer > 0.1) { spawnRay(); raySpawnTimer -= 0.1; }
+      }
+      rayGroup.rotation.z += 0.1 * dt;
+      for (let i = rayParticles.length - 1; i >= 0; i--) {
+        const p = rayParticles[i]; p.life += dt;
+        if (p.life >= p.maxLife) { rayGroup.remove(p.mesh); p.mesh.material.dispose(); rayParticles.splice(i, 1); continue; }
+        const n = p.life/p.maxLife;
+        p.mesh.scale.set(n>0.7?p.w*(1-(n-0.7)/0.3):p.w, p.l*Math.pow(n,0.7), 1);
+        p.mesh.material.opacity = (n<0.1?n*10:(n>0.7?1-((n-0.7)/0.3):1))*0.4;
+      }
+    }
+
+    bgSpawnTimer += dt; while(bgSpawnTimer > 0.2) { spawnBgSparkle(); bgSpawnTimer -= 0.2; }
+    for (let i = bgSparkles.length - 1; i >= 0; i--) {
+      const p = bgSparkles[i]; p.life += dt;
+      if (p.life >= p.maxLife) { bgSparkleGroup.remove(p.mesh); p.mesh.material.dispose(); bgSparkles.splice(i, 1); continue; }
+      const n = p.life/p.maxLife;
+      p.mesh.material.opacity = (n<0.2?n*5:(n>0.8?1-((n-0.8)*5):1)) * p.targetOp;
+      p.mesh.position.y += dt*0.2; p.mesh.material.rotation += dt*0.2;
+    }
+
+    renderer.render(scene, camera);
+  }
+
+  animate();
+</script>
+</body>
+</html>
